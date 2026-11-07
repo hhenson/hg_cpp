@@ -32,6 +32,7 @@ Additional programs:
 | --- | --- | --- |
 | [Python high-count map](../../bindings/python/benchmarks/high_count_map.py) | Run with a matching Release Python extension | Python callbacks or library arithmetic on the portable workload |
 | [Python dictionary mappings](../../bindings/python/benchmarks/dict_mapping.py) | Run with a matching Release Python extension | Lazy mappings, eager conversion, lookup, traversal, materialization, wrapper/buffer sizes; no saved timing results |
+| [hgraph comparative suite](../../bindings/python/benchmarks/hgraph_suite/README.md) | `compare.py` with an HG and an hgraph interpreter | hgraph benchmark pack ported to HG; timing and RSS for both implementations; [6 November results](../../benchmarks/results/hgraph_suite/README.md) |
 | [Wakeup control](../../benchmarks/wakeup_latency_control.cpp) | Standalone C++23, `-O3 -DNDEBUG -pthread -Iinclude` | Semaphore and engine wakeup controls; queue baseline results |
 | [Polling experiment](../../benchmarks/periodic_callback_overhead_experiment.cpp) | Standalone C++23, `-O3 -DNDEBUG -pthread -Iinclude` | No-poll, per-cycle, strided, and coarse-clock controls |
 | [HTTP header conversion](../../benchmarks/http_header_bench.cpp) | Standalone C++23, `-O3 -DNDEBUG` | Old/new ASCII and Latin-1 conversion; [29 October report](../../benchmarks/http_header_bench.md) |

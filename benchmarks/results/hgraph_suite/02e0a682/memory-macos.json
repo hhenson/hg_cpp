@@ -1,0 +1,7688 @@
+{
+ "metadata": {
+  "hg_commit": "02e0a682+hgraph_suite",
+  "hgraph_commit": "7e45748c9",
+  "platform": "Darwin 27.0.0 arm64",
+  "cpu": "Apple M2 Ultra",
+  "python": "3.14.7",
+  "samples": 3,
+  "cycle_scale": 1.0,
+  "size_scale": 1.0
+ },
+ "raw": {
+  "construct_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 79.36,
+     "peak_rss_mb": 81.67,
+     "peak_growth_mb": 2.31,
+     "retained_mb": 2.31,
+     "retained_series_mb": [
+      2.31
+     ],
+     "max_rss_mb": 81.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.09,
+     "peak_growth_mb": 2.44,
+     "retained_mb": 2.44,
+     "retained_series_mb": [
+      2.44
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.11,
+     "peak_growth_mb": 2.53,
+     "retained_mb": 2.53,
+     "retained_series_mb": [
+      2.53
+     ],
+     "max_rss_mb": 77.1
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 42.28,
+     "peak_rss_mb": 43.84,
+     "peak_growth_mb": 1.56,
+     "retained_mb": 1.56,
+     "retained_series_mb": [
+      1.56
+     ],
+     "max_rss_mb": 43.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 40.17,
+     "peak_growth_mb": 1.55,
+     "retained_mb": 1.55,
+     "retained_series_mb": [
+      1.55
+     ],
+     "max_rss_mb": 40.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 40.31,
+     "peak_growth_mb": 1.62,
+     "retained_mb": 1.62,
+     "retained_series_mb": [
+      1.62
+     ],
+     "max_rss_mb": 40.3
+    }
+   ]
+  },
+  "construct_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 79.38,
+     "peak_growth_mb": 4.64,
+     "retained_mb": 4.64,
+     "retained_series_mb": [
+      4.64
+     ],
+     "max_rss_mb": 79.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 79.28,
+     "peak_growth_mb": 4.69,
+     "retained_mb": 4.69,
+     "retained_series_mb": [
+      4.69
+     ],
+     "max_rss_mb": 79.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.5,
+     "peak_rss_mb": 79.27,
+     "peak_growth_mb": 4.77,
+     "retained_mb": 4.77,
+     "retained_series_mb": [
+      4.77
+     ],
+     "max_rss_mb": 79.3
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 42.72,
+     "peak_growth_mb": 4.06,
+     "retained_mb": 4.06,
+     "retained_series_mb": [
+      4.06
+     ],
+     "max_rss_mb": 42.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 42.89,
+     "peak_growth_mb": 4.22,
+     "retained_mb": 4.22,
+     "retained_series_mb": [
+      4.22
+     ],
+     "max_rss_mb": 42.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 42.84,
+     "peak_growth_mb": 4.14,
+     "retained_mb": 4.14,
+     "retained_series_mb": [
+      4.14
+     ],
+     "max_rss_mb": 42.9
+    }
+   ]
+  },
+  "construct_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 88.06,
+     "peak_growth_mb": 13.36,
+     "retained_mb": 13.36,
+     "retained_series_mb": [
+      13.36
+     ],
+     "max_rss_mb": 88.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 87.95,
+     "peak_growth_mb": 13.34,
+     "retained_mb": 13.34,
+     "retained_series_mb": [
+      13.34
+     ],
+     "max_rss_mb": 88.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 87.97,
+     "peak_growth_mb": 13.31,
+     "retained_mb": 13.31,
+     "retained_series_mb": [
+      13.31
+     ],
+     "max_rss_mb": 88.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 51.38,
+     "peak_growth_mb": 12.89,
+     "retained_mb": 12.89,
+     "retained_series_mb": [
+      12.89
+     ],
+     "max_rss_mb": 51.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.75,
+     "peak_rss_mb": 51.3,
+     "peak_growth_mb": 12.55,
+     "retained_mb": 12.55,
+     "retained_series_mb": [
+      12.55
+     ],
+     "max_rss_mb": 51.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 51.38,
+     "peak_growth_mb": 12.73,
+     "retained_mb": 12.73,
+     "retained_series_mb": [
+      12.73
+     ],
+     "max_rss_mb": 51.4
+    }
+   ]
+  },
+  "tick_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.42,
+     "peak_growth_mb": 1.8,
+     "retained_mb": 1.8,
+     "retained_series_mb": [
+      1.8
+     ],
+     "max_rss_mb": 76.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 76.44,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.55,
+     "peak_growth_mb": 1.86,
+     "retained_mb": 1.86,
+     "retained_series_mb": [
+      1.86
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 39.58,
+     "peak_growth_mb": 0.95,
+     "retained_mb": 0.95,
+     "retained_series_mb": [
+      0.95
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 39.56,
+     "peak_growth_mb": 0.92,
+     "retained_mb": 0.92,
+     "retained_series_mb": [
+      0.92
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.61,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.6
+    }
+   ]
+  },
+  "tick_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.52,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.78,
+     "peak_rss_mb": 76.58,
+     "peak_growth_mb": 1.8,
+     "retained_mb": 1.8,
+     "retained_series_mb": [
+      1.8
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.45,
+     "peak_growth_mb": 1.81,
+     "retained_mb": 1.81,
+     "retained_series_mb": [
+      1.81
+     ],
+     "max_rss_mb": 76.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.36,
+     "peak_rss_mb": 39.31,
+     "peak_growth_mb": 0.95,
+     "retained_mb": 0.95,
+     "retained_series_mb": [
+      0.95
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 39.59,
+     "peak_growth_mb": 0.97,
+     "retained_mb": 0.97,
+     "retained_series_mb": [
+      0.97
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 39.45,
+     "peak_growth_mb": 0.97,
+     "retained_mb": 0.97,
+     "retained_series_mb": [
+      0.97
+     ],
+     "max_rss_mb": 39.5
+    }
+   ]
+  },
+  "tick_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 76.41,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.8,
+     "peak_rss_mb": 76.62,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.77,
+     "peak_rss_mb": 76.59,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.61,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 39.59,
+     "peak_growth_mb": 0.95,
+     "retained_mb": 0.95,
+     "retained_series_mb": [
+      0.95
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "default_(feedback, 0) supplies the initial value; one extra node",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.53,
+     "peak_rss_mb": 39.56,
+     "peak_growth_mb": 1.03,
+     "retained_mb": 1.03,
+     "retained_series_mb": [
+      1.03
+     ],
+     "max_rss_mb": 39.6
+    }
+   ]
+  },
+  "tick_py__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 76.67,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.59,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 76.55,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 39.2,
+     "peak_growth_mb": 0.55,
+     "retained_mb": 0.55,
+     "retained_series_mb": [
+      0.55
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.2,
+     "peak_growth_mb": 0.53,
+     "retained_mb": 0.53,
+     "retained_series_mb": [
+      0.53
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 39.06,
+     "peak_growth_mb": 0.52,
+     "retained_mb": 0.53,
+     "retained_series_mb": [
+      0.53
+     ],
+     "max_rss_mb": 39.1
+    }
+   ]
+  },
+  "tick_py__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.56,
+     "peak_growth_mb": 1.89,
+     "retained_mb": 1.91,
+     "retained_series_mb": [
+      1.91
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 76.53,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.94
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.56,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.73,
+     "peak_rss_mb": 39.3,
+     "peak_growth_mb": 0.56,
+     "retained_mb": 0.56,
+     "retained_series_mb": [
+      0.56
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 39.06,
+     "peak_growth_mb": 0.59,
+     "retained_mb": 0.59,
+     "retained_series_mb": [
+      0.59
+     ],
+     "max_rss_mb": 39.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.22,
+     "peak_growth_mb": 0.55,
+     "retained_mb": 0.55,
+     "retained_series_mb": [
+      0.55
+     ],
+     "max_rss_mb": 39.2
+    }
+   ]
+  },
+  "tick_py__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 76.52,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.94
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.59,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.94
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 76.62,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.53,
+     "peak_rss_mb": 39.06,
+     "peak_growth_mb": 0.53,
+     "retained_mb": 0.53,
+     "retained_series_mb": [
+      0.53
+     ],
+     "max_rss_mb": 39.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.22,
+     "peak_growth_mb": 0.55,
+     "retained_mb": 0.55,
+     "retained_series_mb": [
+      0.55
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tick_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 39.02,
+     "peak_growth_mb": 0.58,
+     "retained_mb": 0.58,
+     "retained_series_mb": [
+      0.58
+     ],
+     "max_rss_mb": 39.0
+    }
+   ]
+  },
+  "construct_std__repeat_once": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 76.61,
+     "peak_growth_mb": 1.91,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.41,
+     "peak_rss_mb": 39.58,
+     "peak_growth_mb": 1.17,
+     "retained_mb": 1.17,
+     "retained_series_mb": [
+      1.17
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 39.64,
+     "peak_growth_mb": 1.0,
+     "retained_mb": 1.0,
+     "retained_series_mb": [
+      1.0
+     ],
+     "max_rss_mb": 39.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.53,
+     "peak_rss_mb": 39.62,
+     "peak_growth_mb": 1.09,
+     "retained_mb": 1.09,
+     "retained_series_mb": [
+      1.09
+     ],
+     "max_rss_mb": 39.6
+    }
+   ]
+  },
+  "construct_std__repeat_ten": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 76.67,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.89,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.94,
+      1.94
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.91,
+      1.91,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.92,
+      1.94,
+      1.94
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.52,
+     "peak_rss_mb": 76.53,
+     "peak_growth_mb": 2.02,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.95,
+      1.95,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.98,
+      1.98
+     ],
+     "max_rss_mb": 76.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 39.83,
+     "peak_growth_mb": 1.17,
+     "retained_mb": 1.14,
+     "retained_series_mb": [
+      0.97,
+      1.03,
+      1.08,
+      1.09,
+      1.11,
+      1.11,
+      1.12,
+      1.14,
+      1.14,
+      1.14
+     ],
+     "max_rss_mb": 39.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 39.83,
+     "peak_growth_mb": 1.17,
+     "retained_mb": 1.14,
+     "retained_series_mb": [
+      0.95,
+      1.02,
+      1.05,
+      1.06,
+      1.08,
+      1.09,
+      1.12,
+      1.14,
+      1.14,
+      1.14
+     ],
+     "max_rss_mb": 39.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.75,
+     "peak_rss_mb": 39.91,
+     "peak_growth_mb": 1.16,
+     "retained_mb": 1.12,
+     "retained_series_mb": [
+      0.97,
+      1.06,
+      1.08,
+      1.09,
+      1.09,
+      1.09,
+      1.12,
+      1.12,
+      1.12,
+      1.12
+     ],
+     "max_rss_mb": 39.9
+    }
+   ]
+  },
+  "construct_std__repeat_hundred": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.06,
+     "peak_growth_mb": 2.41,
+     "retained_mb": 2.38,
+     "retained_series_mb": [
+      1.97,
+      1.97,
+      1.98,
+      2.28,
+      2.28,
+      2.28,
+      2.28,
+      2.28,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.3,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.31,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.36,
+      2.38,
+      2.38,
+      2.38
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 77.0,
+     "peak_growth_mb": 2.39,
+     "retained_mb": 2.36,
+     "retained_series_mb": [
+      2.02,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.33,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.34,
+      2.36,
+      2.36,
+      2.36,
+      2.36,
+      2.36
+     ],
+     "max_rss_mb": 77.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.75,
+     "peak_growth_mb": 2.11,
+     "retained_mb": 2.08,
+     "retained_series_mb": [
+      1.92,
+      1.95,
+      1.95,
+      1.95,
+      1.95,
+      1.95,
+      1.95,
+      1.95,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.97,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      1.98,
+      2.0,
+      2.0,
+      2.0,
+      2.0,
+      2.02,
+      2.02,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.03,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.05,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.06,
+      2.08,
+      2.08,
+      2.08,
+      2.08
+     ],
+     "max_rss_mb": 76.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.73,
+     "peak_rss_mb": 40.48,
+     "peak_growth_mb": 1.75,
+     "retained_mb": 1.72,
+     "retained_series_mb": [
+      0.94,
+      1.03,
+      1.08,
+      1.09,
+      1.09,
+      1.09,
+      1.11,
+      1.12,
+      1.14,
+      1.14,
+      1.14,
+      1.14,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.16,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.17,
+      1.19,
+      1.19,
+      1.19,
+      1.19,
+      1.19,
+      1.19,
+      1.2,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.48,
+      1.5,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.7,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72,
+      1.72
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 39.98,
+     "peak_growth_mb": 1.36,
+     "retained_mb": 1.33,
+     "retained_series_mb": [
+      1.03,
+      1.12,
+      1.14,
+      1.16,
+      1.16,
+      1.16,
+      1.17,
+      1.17,
+      1.17,
+      1.19,
+      1.19,
+      1.19,
+      1.2,
+      1.2,
+      1.2,
+      1.2,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.22,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.23,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.25,
+      1.27,
+      1.27,
+      1.27,
+      1.27,
+      1.27,
+      1.27,
+      1.28,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.3,
+      1.31,
+      1.31,
+      1.31,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33,
+      1.33
+     ],
+     "max_rss_mb": 40.0
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.38,
+     "peak_rss_mb": 39.92,
+     "peak_growth_mb": 1.55,
+     "retained_mb": 1.52,
+     "retained_series_mb": [
+      1.19,
+      1.27,
+      1.3,
+      1.33,
+      1.34,
+      1.34,
+      1.39,
+      1.39,
+      1.41,
+      1.41,
+      1.41,
+      1.41,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.42,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.44,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.45,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.47,
+      1.48,
+      1.48,
+      1.48,
+      1.48,
+      1.48,
+      1.48,
+      1.48,
+      1.48,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.5,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52,
+      1.52
+     ],
+     "max_rss_mb": 39.9
+    }
+   ]
+  },
+  "construct_std__novel_ten": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.77,
+     "peak_growth_mb": 3.14,
+     "retained_mb": 3.12,
+     "retained_series_mb": [
+      1.92,
+      2.0,
+      2.06,
+      2.14,
+      2.31,
+      2.47,
+      2.56,
+      2.75,
+      2.83,
+      3.12
+     ],
+     "max_rss_mb": 77.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 77.53,
+     "peak_growth_mb": 2.92,
+     "retained_mb": 2.91,
+     "retained_series_mb": [
+      1.91,
+      1.94,
+      2.02,
+      2.08,
+      2.25,
+      2.44,
+      2.53,
+      2.64,
+      2.73,
+      2.91
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.78,
+     "peak_growth_mb": 3.16,
+     "retained_mb": 3.14,
+     "retained_series_mb": [
+      2.0,
+      2.08,
+      2.09,
+      2.16,
+      2.33,
+      2.47,
+      2.58,
+      2.77,
+      2.89,
+      3.14
+     ],
+     "max_rss_mb": 77.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 40.77,
+     "peak_growth_mb": 2.14,
+     "retained_mb": 2.12,
+     "retained_series_mb": [
+      1.02,
+      1.09,
+      1.2,
+      1.3,
+      1.38,
+      1.48,
+      1.62,
+      1.83,
+      1.95,
+      2.12
+     ],
+     "max_rss_mb": 40.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.61,
+     "peak_rss_mb": 40.73,
+     "peak_growth_mb": 2.12,
+     "retained_mb": 2.11,
+     "retained_series_mb": [
+      1.06,
+      1.2,
+      1.31,
+      1.33,
+      1.44,
+      1.55,
+      1.66,
+      1.83,
+      1.89,
+      2.11
+     ],
+     "max_rss_mb": 40.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "construct_std",
+     "cycle_scale": 1.0,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 40.84,
+     "peak_growth_mb": 2.17,
+     "retained_mb": 2.16,
+     "retained_series_mb": [
+      0.98,
+      1.09,
+      1.2,
+      1.28,
+      1.39,
+      1.48,
+      1.61,
+      1.83,
+      1.97,
+      2.16
+     ],
+     "max_rss_mb": 40.9
+    }
+   ]
+  },
+  "service_adaptor_py__repeat_once": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.3,
+     "peak_growth_mb": 2.66,
+     "retained_mb": 2.67,
+     "retained_series_mb": [
+      2.67
+     ],
+     "max_rss_mb": 77.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 77.47,
+     "peak_growth_mb": 2.72,
+     "retained_mb": 2.72,
+     "retained_series_mb": [
+      2.72
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 75.0,
+     "peak_rss_mb": 77.67,
+     "peak_growth_mb": 2.67,
+     "retained_mb": 2.69,
+     "retained_series_mb": [
+      2.69
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "service_adaptor_py__repeat_ten": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.77,
+     "peak_rss_mb": 77.55,
+     "peak_growth_mb": 2.78,
+     "retained_mb": 2.75,
+     "retained_series_mb": [
+      2.72,
+      2.72,
+      2.73,
+      2.75,
+      2.75,
+      2.75,
+      2.75,
+      2.75,
+      2.75,
+      2.75
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 77.55,
+     "peak_growth_mb": 2.8,
+     "retained_mb": 2.77,
+     "retained_series_mb": [
+      2.7,
+      2.73,
+      2.75,
+      2.77,
+      2.77,
+      2.77,
+      2.77,
+      2.77,
+      2.77,
+      2.77
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 77.52,
+     "peak_growth_mb": 2.77,
+     "retained_mb": 2.73,
+     "retained_series_mb": [
+      2.67,
+      2.72,
+      2.72,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73
+     ],
+     "max_rss_mb": 77.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "service_adaptor_py__repeat_fifty": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 77.39,
+     "peak_growth_mb": 2.78,
+     "retained_mb": 2.75,
+     "retained_series_mb": [
+      2.64,
+      2.7,
+      2.72,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.73,
+      2.75,
+      2.75
+     ],
+     "max_rss_mb": 77.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.86,
+     "peak_growth_mb": 3.14,
+     "retained_mb": 3.11,
+     "retained_series_mb": [
+      2.77,
+      2.78,
+      2.78,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.8,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      3.11,
+      3.11,
+      3.11,
+      3.11,
+      3.11,
+      3.11
+     ],
+     "max_rss_mb": 77.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.42,
+     "peak_growth_mb": 2.84,
+     "retained_mb": 2.81,
+     "retained_series_mb": [
+      2.77,
+      2.78,
+      2.78,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81,
+      2.81
+     ],
+     "max_rss_mb": 77.4
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.005,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "type_str_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 76.42,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.83,
+     "retained_series_mb": [
+      1.83
+     ],
+     "max_rss_mb": 76.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 76.55,
+     "peak_growth_mb": 1.83,
+     "retained_mb": 1.84,
+     "retained_series_mb": [
+      1.84
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.55,
+     "peak_growth_mb": 1.86,
+     "retained_mb": 1.86,
+     "retained_series_mb": [
+      1.86
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 39.38,
+     "peak_growth_mb": 0.92,
+     "retained_mb": 0.92,
+     "retained_series_mb": [
+      0.92
+     ],
+     "max_rss_mb": 39.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.59,
+     "peak_growth_mb": 0.92,
+     "retained_mb": 0.92,
+     "retained_series_mb": [
+      0.92
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 39.53,
+     "peak_growth_mb": 0.89,
+     "retained_mb": 0.89,
+     "retained_series_mb": [
+      0.89
+     ],
+     "max_rss_mb": 39.5
+    }
+   ]
+  },
+  "type_str_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 76.5,
+     "peak_growth_mb": 1.84,
+     "retained_mb": 1.84,
+     "retained_series_mb": [
+      1.84
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.5,
+     "peak_growth_mb": 1.86,
+     "retained_mb": 1.86,
+     "retained_series_mb": [
+      1.86
+     ],
+     "max_rss_mb": 76.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 76.45,
+     "peak_growth_mb": 1.86,
+     "retained_mb": 1.86,
+     "retained_series_mb": [
+      1.86
+     ],
+     "max_rss_mb": 76.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 39.58,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 39.64,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_str_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 39.62,
+     "peak_growth_mb": 0.92,
+     "retained_mb": 0.92,
+     "retained_series_mb": [
+      0.92
+     ],
+     "max_rss_mb": 39.6
+    }
+   ]
+  },
+  "type_cs_py__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 76.72,
+     "peak_growth_mb": 2.06,
+     "retained_mb": 2.06,
+     "retained_series_mb": [
+      2.06
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 2.02,
+     "retained_mb": 2.02,
+     "retained_series_mb": [
+      2.02
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.61,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 2.0,
+     "retained_series_mb": [
+      2.0
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 39.31,
+     "peak_growth_mb": 0.86,
+     "retained_mb": 0.86,
+     "retained_series_mb": [
+      0.86
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 39.33,
+     "peak_growth_mb": 0.89,
+     "retained_mb": 0.89,
+     "retained_series_mb": [
+      0.89
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.58,
+     "peak_rss_mb": 39.48,
+     "peak_growth_mb": 0.91,
+     "retained_mb": 0.91,
+     "retained_series_mb": [
+      0.91
+     ],
+     "max_rss_mb": 39.5
+    }
+   ]
+  },
+  "type_cs_py__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 76.69,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.94
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 76.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 39.52,
+     "peak_growth_mb": 0.97,
+     "retained_mb": 0.97,
+     "retained_series_mb": [
+      0.97
+     ],
+     "max_rss_mb": 39.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 39.38,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "type_cs_py",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 39.41,
+     "peak_growth_mb": 0.94,
+     "retained_mb": 0.94,
+     "retained_series_mb": [
+      0.94
+     ],
+     "max_rss_mb": 39.4
+    }
+   ]
+  },
+  "type_tsw_append_evict_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.7,
+     "peak_growth_mb": 2.03,
+     "retained_mb": 2.03,
+     "retained_series_mb": [
+      2.03
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 76.7,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 76.52,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no tick-window (TSW) time series or to_window"
+    }
+   ]
+  },
+  "type_tsw_append_evict_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 76.61,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 76.7,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 76.62,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 76.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no tick-window (TSW) time series or to_window"
+    }
+   ]
+  },
+  "type_tsw_append_evict_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.67,
+     "peak_growth_mb": 2.0,
+     "retained_mb": 2.0,
+     "retained_series_mb": [
+      2.0
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 76.7,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.67,
+     "peak_growth_mb": 2.0,
+     "retained_mb": 2.0,
+     "retained_series_mb": [
+      2.0
+     ],
+     "max_rss_mb": 76.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "type_tsw_append_evict_std",
+     "cycle_scale": 4.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no tick-window (TSW) time series or to_window"
+    }
+   ]
+  },
+  "tss_add_remove_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.61,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.73,
+     "peak_growth_mb": 2.05,
+     "retained_mb": 2.06,
+     "retained_series_mb": [
+      2.06
+     ],
+     "max_rss_mb": 76.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.72,
+     "peak_growth_mb": 2.05,
+     "retained_mb": 2.05,
+     "retained_series_mb": [
+      2.05
+     ],
+     "max_rss_mb": 76.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 39.22,
+     "peak_growth_mb": 0.73,
+     "retained_mb": 0.73,
+     "retained_series_mb": [
+      0.73
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 39.27,
+     "peak_growth_mb": 0.77,
+     "retained_mb": 0.77,
+     "retained_series_mb": [
+      0.77
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 39.42,
+     "peak_growth_mb": 0.73,
+     "retained_mb": 0.73,
+     "retained_series_mb": [
+      0.73
+     ],
+     "max_rss_mb": 39.4
+    }
+   ]
+  },
+  "tss_add_remove_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.58,
+     "peak_growth_mb": 1.95,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 76.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 76.64,
+     "peak_growth_mb": 2.03,
+     "retained_mb": 2.03,
+     "retained_series_mb": [
+      2.03
+     ],
+     "max_rss_mb": 76.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 76.7,
+     "peak_growth_mb": 2.02,
+     "retained_mb": 2.02,
+     "retained_series_mb": [
+      2.02
+     ],
+     "max_rss_mb": 76.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 39.17,
+     "peak_growth_mb": 0.75,
+     "retained_mb": 0.75,
+     "retained_series_mb": [
+      0.75
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 39.17,
+     "peak_growth_mb": 0.73,
+     "retained_mb": 0.73,
+     "retained_series_mb": [
+      0.73
+     ],
+     "max_rss_mb": 39.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 39.47,
+     "peak_growth_mb": 0.77,
+     "retained_mb": 0.77,
+     "retained_series_mb": [
+      0.77
+     ],
+     "max_rss_mb": 39.5
+    }
+   ]
+  },
+  "tss_add_remove_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 76.83,
+     "peak_growth_mb": 2.16,
+     "retained_mb": 2.16,
+     "retained_series_mb": [
+      2.16
+     ],
+     "max_rss_mb": 76.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 76.88,
+     "peak_growth_mb": 2.25,
+     "retained_mb": 2.25,
+     "retained_series_mb": [
+      2.25
+     ],
+     "max_rss_mb": 76.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 76.83,
+     "peak_growth_mb": 2.17,
+     "retained_mb": 2.17,
+     "retained_series_mb": [
+      2.17
+     ],
+     "max_rss_mb": 76.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 39.31,
+     "peak_growth_mb": 0.86,
+     "retained_mb": 0.86,
+     "retained_series_mb": [
+      0.86
+     ],
+     "max_rss_mb": 39.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.72,
+     "peak_rss_mb": 39.59,
+     "peak_growth_mb": 0.88,
+     "retained_mb": 0.88,
+     "retained_series_mb": [
+      0.88
+     ],
+     "max_rss_mb": 39.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tss_add_remove_std",
+     "cycle_scale": 0.2,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.61,
+     "peak_rss_mb": 39.48,
+     "peak_growth_mb": 0.88,
+     "retained_mb": 0.88,
+     "retained_series_mb": [
+      0.88
+     ],
+     "max_rss_mb": 39.5
+    }
+   ]
+  },
+  "tsd_dense_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.14,
+     "peak_growth_mb": 2.5,
+     "retained_mb": 2.52,
+     "retained_series_mb": [
+      2.52
+     ],
+     "max_rss_mb": 77.2
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.52,
+     "peak_rss_mb": 77.11,
+     "peak_growth_mb": 2.59,
+     "retained_mb": 2.59,
+     "retained_series_mb": [
+      2.59
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.12,
+     "peak_growth_mb": 2.55,
+     "retained_mb": 2.56,
+     "retained_series_mb": [
+      2.56
+     ],
+     "max_rss_mb": 77.2
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 40.11,
+     "peak_growth_mb": 1.41,
+     "retained_mb": 1.42,
+     "retained_series_mb": [
+      1.42
+     ],
+     "max_rss_mb": 40.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 39.98,
+     "peak_growth_mb": 1.48,
+     "retained_mb": 1.48,
+     "retained_series_mb": [
+      1.48
+     ],
+     "max_rss_mb": 40.0
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 39.91,
+     "peak_growth_mb": 1.48,
+     "retained_mb": 1.48,
+     "retained_series_mb": [
+      1.48
+     ],
+     "max_rss_mb": 39.9
+    }
+   ]
+  },
+  "tsd_dense_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.33,
+     "peak_growth_mb": 2.7,
+     "retained_mb": 2.72,
+     "retained_series_mb": [
+      2.72
+     ],
+     "max_rss_mb": 77.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 77.28,
+     "peak_growth_mb": 2.72,
+     "retained_mb": 2.72,
+     "retained_series_mb": [
+      2.72
+     ],
+     "max_rss_mb": 77.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.45,
+     "peak_growth_mb": 2.75,
+     "retained_mb": 2.77,
+     "retained_series_mb": [
+      2.77
+     ],
+     "max_rss_mb": 77.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.52,
+     "peak_rss_mb": 40.2,
+     "peak_growth_mb": 1.69,
+     "retained_mb": 1.7,
+     "retained_series_mb": [
+      1.7
+     ],
+     "max_rss_mb": 40.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 40.06,
+     "peak_growth_mb": 1.61,
+     "retained_mb": 1.61,
+     "retained_series_mb": [
+      1.61
+     ],
+     "max_rss_mb": 40.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 40.31,
+     "peak_growth_mb": 1.64,
+     "retained_mb": 1.66,
+     "retained_series_mb": [
+      1.66
+     ],
+     "max_rss_mb": 40.3
+    }
+   ]
+  },
+  "tsd_dense_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.53,
+     "peak_growth_mb": 2.95,
+     "retained_mb": 2.97,
+     "retained_series_mb": [
+      2.97
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.72,
+     "peak_growth_mb": 3.08,
+     "retained_mb": 3.09,
+     "retained_series_mb": [
+      3.09
+     ],
+     "max_rss_mb": 77.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.64,
+     "peak_growth_mb": 2.98,
+     "retained_mb": 2.98,
+     "retained_series_mb": [
+      2.98
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 40.2,
+     "peak_growth_mb": 1.77,
+     "retained_mb": 1.77,
+     "retained_series_mb": [
+      1.77
+     ],
+     "max_rss_mb": 40.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 40.44,
+     "peak_growth_mb": 1.77,
+     "retained_mb": 1.77,
+     "retained_series_mb": [
+      1.77
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_dense_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 40.36,
+     "peak_growth_mb": 1.81,
+     "retained_mb": 1.81,
+     "retained_series_mb": [
+      1.81
+     ],
+     "max_rss_mb": 40.4
+    }
+   ]
+  },
+  "tsd_sparse_large_capacity_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.77,
+     "peak_rss_mb": 80.64,
+     "peak_growth_mb": 5.88,
+     "retained_mb": 5.89,
+     "retained_series_mb": [
+      5.89
+     ],
+     "max_rss_mb": 80.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 80.53,
+     "peak_growth_mb": 5.92,
+     "retained_mb": 5.94,
+     "retained_series_mb": [
+      5.94
+     ],
+     "max_rss_mb": 80.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 80.61,
+     "peak_growth_mb": 5.91,
+     "retained_mb": 5.92,
+     "retained_series_mb": [
+      5.92
+     ],
+     "max_rss_mb": 80.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 41.69,
+     "peak_growth_mb": 3.02,
+     "retained_mb": 3.02,
+     "retained_series_mb": [
+      3.02
+     ],
+     "max_rss_mb": 41.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 41.39,
+     "peak_growth_mb": 2.97,
+     "retained_mb": 2.97,
+     "retained_series_mb": [
+      2.97
+     ],
+     "max_rss_mb": 41.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.05,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 41.56,
+     "peak_growth_mb": 3.02,
+     "retained_mb": 3.02,
+     "retained_series_mb": [
+      3.02
+     ],
+     "max_rss_mb": 41.6
+    }
+   ]
+  },
+  "tsd_sparse_large_capacity_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 95.66,
+     "peak_growth_mb": 21.05,
+     "retained_mb": 21.05,
+     "retained_series_mb": [
+      21.05
+     ],
+     "max_rss_mb": 95.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 95.58,
+     "peak_growth_mb": 20.84,
+     "retained_mb": 20.84,
+     "retained_series_mb": [
+      20.84
+     ],
+     "max_rss_mb": 95.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 95.66,
+     "peak_growth_mb": 20.92,
+     "retained_mb": 20.92,
+     "retained_series_mb": [
+      20.92
+     ],
+     "max_rss_mb": 95.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 48.27,
+     "peak_growth_mb": 9.62,
+     "retained_mb": 9.61,
+     "retained_series_mb": [
+      9.61
+     ],
+     "max_rss_mb": 48.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.61,
+     "peak_rss_mb": 48.27,
+     "peak_growth_mb": 9.66,
+     "retained_mb": 9.64,
+     "retained_series_mb": [
+      9.64
+     ],
+     "max_rss_mb": 48.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 48.22,
+     "peak_growth_mb": 9.73,
+     "retained_mb": 9.72,
+     "retained_series_mb": [
+      9.72
+     ],
+     "max_rss_mb": 48.2
+    }
+   ]
+  },
+  "tsd_sparse_large_capacity_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 150.5,
+     "peak_growth_mb": 75.91,
+     "retained_mb": 75.91,
+     "retained_series_mb": [
+      75.91
+     ],
+     "max_rss_mb": 150.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 150.52,
+     "peak_growth_mb": 75.95,
+     "retained_mb": 75.95,
+     "retained_series_mb": [
+      75.95
+     ],
+     "max_rss_mb": 150.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 150.53,
+     "peak_growth_mb": 75.89,
+     "retained_mb": 75.89,
+     "retained_series_mb": [
+      75.89
+     ],
+     "max_rss_mb": 150.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 72.02,
+     "peak_growth_mb": 33.34,
+     "retained_mb": 32.53,
+     "retained_series_mb": [
+      32.53
+     ],
+     "max_rss_mb": 72.0
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 72.0,
+     "peak_growth_mb": 33.38,
+     "retained_mb": 32.56,
+     "retained_series_mb": [
+      32.56
+     ],
+     "max_rss_mb": 72.0
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_sparse_large_capacity_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 71.88,
+     "peak_growth_mb": 33.45,
+     "retained_mb": 32.62,
+     "retained_series_mb": [
+      32.62
+     ],
+     "max_rss_mb": 71.9
+    }
+   ]
+  },
+  "tsd_churn_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.73,
+     "peak_growth_mb": 3.08,
+     "retained_mb": 3.08,
+     "retained_series_mb": [
+      3.08
+     ],
+     "max_rss_mb": 77.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.61,
+     "peak_growth_mb": 2.95,
+     "retained_mb": 2.95,
+     "retained_series_mb": [
+      2.95
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.69,
+     "peak_growth_mb": 3.11,
+     "retained_mb": 3.11,
+     "retained_series_mb": [
+      3.11
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 40.83,
+     "peak_growth_mb": 2.12,
+     "retained_mb": 2.12,
+     "retained_series_mb": [
+      2.12
+     ],
+     "max_rss_mb": 40.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.41,
+     "peak_rss_mb": 40.59,
+     "peak_growth_mb": 2.19,
+     "retained_mb": 2.2,
+     "retained_series_mb": [
+      2.2
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.41,
+     "peak_rss_mb": 40.59,
+     "peak_growth_mb": 2.19,
+     "retained_mb": 2.19,
+     "retained_series_mb": [
+      2.19
+     ],
+     "max_rss_mb": 40.6
+    }
+   ]
+  },
+  "tsd_churn_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 77.8,
+     "peak_growth_mb": 3.11,
+     "retained_mb": 3.11,
+     "retained_series_mb": [
+      3.11
+     ],
+     "max_rss_mb": 77.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.8,
+     "peak_growth_mb": 3.12,
+     "retained_mb": 3.12,
+     "retained_series_mb": [
+      3.12
+     ],
+     "max_rss_mb": 77.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.67,
+     "peak_growth_mb": 3.05,
+     "retained_mb": 3.05,
+     "retained_series_mb": [
+      3.05
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.61,
+     "peak_rss_mb": 42.03,
+     "peak_growth_mb": 3.42,
+     "retained_mb": 3.44,
+     "retained_series_mb": [
+      3.44
+     ],
+     "max_rss_mb": 42.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 41.91,
+     "peak_growth_mb": 3.48,
+     "retained_mb": 3.48,
+     "retained_series_mb": [
+      3.48
+     ],
+     "max_rss_mb": 41.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 41.97,
+     "peak_growth_mb": 3.52,
+     "retained_mb": 3.52,
+     "retained_series_mb": [
+      3.52
+     ],
+     "max_rss_mb": 42.0
+    }
+   ]
+  },
+  "tsd_churn_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.84,
+     "peak_growth_mb": 3.12,
+     "retained_mb": 3.12,
+     "retained_series_mb": [
+      3.12
+     ],
+     "max_rss_mb": 77.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.83,
+     "peak_growth_mb": 3.16,
+     "retained_mb": 3.17,
+     "retained_series_mb": [
+      3.17
+     ],
+     "max_rss_mb": 77.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.81,
+     "peak_growth_mb": 3.11,
+     "retained_mb": 3.11,
+     "retained_series_mb": [
+      3.11
+     ],
+     "max_rss_mb": 77.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 43.16,
+     "peak_growth_mb": 4.66,
+     "retained_mb": 4.67,
+     "retained_series_mb": [
+      4.67
+     ],
+     "max_rss_mb": 43.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 43.06,
+     "peak_growth_mb": 4.58,
+     "retained_mb": 4.58,
+     "retained_series_mb": [
+      4.58
+     ],
+     "max_rss_mb": 43.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_churn_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.72,
+     "peak_rss_mb": 43.31,
+     "peak_growth_mb": 4.59,
+     "retained_mb": 4.59,
+     "retained_series_mb": [
+      4.59
+     ],
+     "max_rss_mb": 43.3
+    }
+   ]
+  },
+  "tsd_capacity_growth_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 78.56,
+     "peak_growth_mb": 3.83,
+     "retained_mb": 3.84,
+     "retained_series_mb": [
+      3.84
+     ],
+     "max_rss_mb": 78.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 78.58,
+     "peak_growth_mb": 3.97,
+     "retained_mb": 3.98,
+     "retained_series_mb": [
+      3.98
+     ],
+     "max_rss_mb": 78.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 78.48,
+     "peak_growth_mb": 3.86,
+     "retained_mb": 3.88,
+     "retained_series_mb": [
+      3.88
+     ],
+     "max_rss_mb": 78.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 40.92,
+     "peak_growth_mb": 2.48,
+     "retained_mb": 2.48,
+     "retained_series_mb": [
+      2.48
+     ],
+     "max_rss_mb": 40.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 41.16,
+     "peak_growth_mb": 2.47,
+     "retained_mb": 2.47,
+     "retained_series_mb": [
+      2.47
+     ],
+     "max_rss_mb": 41.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 40.98,
+     "peak_growth_mb": 2.55,
+     "retained_mb": 2.56,
+     "retained_series_mb": [
+      2.56
+     ],
+     "max_rss_mb": 41.0
+    }
+   ]
+  },
+  "tsd_capacity_growth_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 84.36,
+     "peak_growth_mb": 9.72,
+     "retained_mb": 9.73,
+     "retained_series_mb": [
+      9.73
+     ],
+     "max_rss_mb": 84.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 84.52,
+     "peak_growth_mb": 9.91,
+     "retained_mb": 9.91,
+     "retained_series_mb": [
+      9.91
+     ],
+     "max_rss_mb": 84.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 84.33,
+     "peak_growth_mb": 9.61,
+     "retained_mb": 9.62,
+     "retained_series_mb": [
+      9.62
+     ],
+     "max_rss_mb": 84.4
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 44.38,
+     "peak_growth_mb": 5.75,
+     "retained_mb": 5.75,
+     "retained_series_mb": [
+      5.75
+     ],
+     "max_rss_mb": 44.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 44.38,
+     "peak_growth_mb": 5.72,
+     "retained_mb": 5.72,
+     "retained_series_mb": [
+      5.72
+     ],
+     "max_rss_mb": 44.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 44.41,
+     "peak_growth_mb": 5.73,
+     "retained_mb": 5.73,
+     "retained_series_mb": [
+      5.73
+     ],
+     "max_rss_mb": 44.4
+    }
+   ]
+  },
+  "tsd_capacity_growth_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 91.53,
+     "peak_growth_mb": 16.97,
+     "retained_mb": 16.98,
+     "retained_series_mb": [
+      16.98
+     ],
+     "max_rss_mb": 91.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 91.83,
+     "peak_growth_mb": 17.27,
+     "retained_mb": 17.28,
+     "retained_series_mb": [
+      17.28
+     ],
+     "max_rss_mb": 91.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.53,
+     "peak_rss_mb": 91.67,
+     "peak_growth_mb": 17.14,
+     "retained_mb": 17.14,
+     "retained_series_mb": [
+      17.14
+     ],
+     "max_rss_mb": 91.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 48.19,
+     "peak_growth_mb": 9.69,
+     "retained_mb": 9.69,
+     "retained_series_mb": [
+      9.69
+     ],
+     "max_rss_mb": 48.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.59,
+     "peak_rss_mb": 48.28,
+     "peak_growth_mb": 9.69,
+     "retained_mb": 9.69,
+     "retained_series_mb": [
+      9.69
+     ],
+     "max_rss_mb": 48.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_capacity_growth_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.58,
+     "peak_rss_mb": 48.33,
+     "peak_growth_mb": 9.75,
+     "retained_mb": 9.75,
+     "retained_series_mb": [
+      9.75
+     ],
+     "max_rss_mb": 48.3
+    }
+   ]
+  },
+  "tsd_clear_repopulate_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 80.97,
+     "peak_growth_mb": 6.34,
+     "retained_mb": 6.34,
+     "retained_series_mb": [
+      6.34
+     ],
+     "max_rss_mb": 81.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 80.97,
+     "peak_growth_mb": 6.33,
+     "retained_mb": 6.34,
+     "retained_series_mb": [
+      6.34
+     ],
+     "max_rss_mb": 81.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 81.02,
+     "peak_growth_mb": 6.39,
+     "retained_mb": 6.41,
+     "retained_series_mb": [
+      6.41
+     ],
+     "max_rss_mb": 81.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.58,
+     "peak_rss_mb": 43.12,
+     "peak_growth_mb": 4.55,
+     "retained_mb": 4.55,
+     "retained_series_mb": [
+      4.55
+     ],
+     "max_rss_mb": 43.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 43.17,
+     "peak_growth_mb": 4.52,
+     "retained_mb": 4.52,
+     "retained_series_mb": [
+      4.52
+     ],
+     "max_rss_mb": 43.2
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 43.05,
+     "peak_growth_mb": 4.56,
+     "retained_mb": 4.56,
+     "retained_series_mb": [
+      4.56
+     ],
+     "max_rss_mb": 43.1
+    }
+   ]
+  },
+  "tsd_clear_repopulate_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.78,
+     "peak_rss_mb": 81.08,
+     "peak_growth_mb": 6.3,
+     "retained_mb": 6.31,
+     "retained_series_mb": [
+      6.31
+     ],
+     "max_rss_mb": 81.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 81.02,
+     "peak_growth_mb": 6.34,
+     "retained_mb": 6.36,
+     "retained_series_mb": [
+      6.36
+     ],
+     "max_rss_mb": 81.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 80.97,
+     "peak_growth_mb": 6.36,
+     "retained_mb": 6.38,
+     "retained_series_mb": [
+      6.38
+     ],
+     "max_rss_mb": 81.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 48.28,
+     "peak_growth_mb": 9.78,
+     "retained_mb": 9.78,
+     "retained_series_mb": [
+      9.78
+     ],
+     "max_rss_mb": 48.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 48.27,
+     "peak_growth_mb": 9.8,
+     "retained_mb": 9.8,
+     "retained_series_mb": [
+      9.8
+     ],
+     "max_rss_mb": 48.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 0.25,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 48.39,
+     "peak_growth_mb": 9.7,
+     "retained_mb": 9.7,
+     "retained_series_mb": [
+      9.7
+     ],
+     "max_rss_mb": 48.4
+    }
+   ]
+  },
+  "tsd_clear_repopulate_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 81.0,
+     "peak_growth_mb": 6.34,
+     "retained_mb": 6.36,
+     "retained_series_mb": [
+      6.36
+     ],
+     "max_rss_mb": 81.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 81.03,
+     "peak_growth_mb": 6.31,
+     "retained_mb": 6.33,
+     "retained_series_mb": [
+      6.33
+     ],
+     "max_rss_mb": 81.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.78,
+     "peak_rss_mb": 81.12,
+     "peak_growth_mb": 6.34,
+     "retained_mb": 6.34,
+     "retained_series_mb": [
+      6.34
+     ],
+     "max_rss_mb": 81.1
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 68.38,
+     "peak_growth_mb": 29.83,
+     "retained_mb": 29.83,
+     "retained_series_mb": [
+      29.83
+     ],
+     "max_rss_mb": 68.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 68.44,
+     "peak_growth_mb": 29.78,
+     "retained_mb": 29.78,
+     "retained_series_mb": [
+      29.78
+     ],
+     "max_rss_mb": 68.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_clear_repopulate_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.72,
+     "peak_rss_mb": 68.5,
+     "peak_growth_mb": 29.78,
+     "retained_mb": 29.78,
+     "retained_series_mb": [
+      29.78
+     ],
+     "max_rss_mb": 68.5
+    }
+   ]
+  },
+  "tsd_key_reactivation_std__short": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.69,
+     "peak_growth_mb": 3.02,
+     "retained_mb": 3.02,
+     "retained_series_mb": [
+      3.02
+     ],
+     "max_rss_mb": 77.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 77.64,
+     "peak_growth_mb": 3.05,
+     "retained_mb": 3.06,
+     "retained_series_mb": [
+      3.06
+     ],
+     "max_rss_mb": 77.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 77.73,
+     "peak_growth_mb": 3.0,
+     "retained_mb": 3.0,
+     "retained_series_mb": [
+      3.0
+     ],
+     "max_rss_mb": 77.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 40.45,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 40.47,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 40.36,
+     "peak_growth_mb": 1.91,
+     "retained_mb": 1.91,
+     "retained_series_mb": [
+      1.91
+     ],
+     "max_rss_mb": 40.4
+    }
+   ]
+  },
+  "tsd_key_reactivation_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 75.25,
+     "peak_rss_mb": 78.41,
+     "peak_growth_mb": 3.16,
+     "retained_mb": 3.16,
+     "retained_series_mb": [
+      3.16
+     ],
+     "max_rss_mb": 78.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.7,
+     "peak_growth_mb": 2.98,
+     "retained_mb": 3.0,
+     "retained_series_mb": [
+      3.0
+     ],
+     "max_rss_mb": 77.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.64,
+     "peak_growth_mb": 2.97,
+     "retained_mb": 2.98,
+     "retained_series_mb": [
+      2.98
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 40.45,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 2.0,
+     "retained_series_mb": [
+      2.0
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 40.52,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 0.5,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.44,
+     "peak_rss_mb": 40.45,
+     "peak_growth_mb": 2.02,
+     "retained_mb": 2.02,
+     "retained_series_mb": [
+      2.02
+     ],
+     "max_rss_mb": 40.5
+    }
+   ]
+  },
+  "tsd_key_reactivation_std__long": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.69,
+     "peak_growth_mb": 2.98,
+     "retained_mb": 2.98,
+     "retained_series_mb": [
+      2.98
+     ],
+     "max_rss_mb": 77.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.59,
+     "peak_growth_mb": 2.94,
+     "retained_mb": 2.94,
+     "retained_series_mb": [
+      2.94
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.72,
+     "peak_growth_mb": 3.02,
+     "retained_mb": 3.03,
+     "retained_series_mb": [
+      3.03
+     ],
+     "max_rss_mb": 77.8
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.58,
+     "peak_rss_mb": 40.55,
+     "peak_growth_mb": 1.97,
+     "retained_mb": 1.97,
+     "retained_series_mb": [
+      1.97
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.38,
+     "peak_rss_mb": 40.42,
+     "peak_growth_mb": 2.05,
+     "retained_mb": 2.05,
+     "retained_series_mb": [
+      2.05
+     ],
+     "max_rss_mb": 40.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "tsd_key_reactivation_std",
+     "cycle_scale": 1.0,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 40.62,
+     "peak_growth_mb": 1.98,
+     "retained_mb": 1.98,
+     "retained_series_mb": [
+      1.98
+     ],
+     "max_rss_mb": 40.6
+    }
+   ]
+  },
+  "reduce_tsd_nested_graph_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.73,
+     "peak_rss_mb": 77.06,
+     "peak_growth_mb": 2.33,
+     "retained_mb": 2.33,
+     "retained_series_mb": [
+      2.33
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 76.88,
+     "peak_growth_mb": 2.3,
+     "retained_mb": 2.31,
+     "retained_series_mb": [
+      2.31
+     ],
+     "max_rss_mb": 76.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.02,
+     "peak_growth_mb": 2.31,
+     "retained_mb": 2.31,
+     "retained_series_mb": [
+      2.31
+     ],
+     "max_rss_mb": 77.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 39.91,
+     "peak_growth_mb": 1.22,
+     "retained_mb": 1.22,
+     "retained_series_mb": [
+      1.22
+     ],
+     "max_rss_mb": 39.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 39.67,
+     "peak_growth_mb": 1.22,
+     "retained_mb": 1.22,
+     "retained_series_mb": [
+      1.22
+     ],
+     "max_rss_mb": 39.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.1,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.5,
+     "peak_rss_mb": 39.7,
+     "peak_growth_mb": 1.2,
+     "retained_mb": 1.2,
+     "retained_series_mb": [
+      1.2
+     ],
+     "max_rss_mb": 39.7
+    }
+   ]
+  },
+  "reduce_tsd_nested_graph_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.06,
+     "peak_growth_mb": 2.34,
+     "retained_mb": 2.34,
+     "retained_series_mb": [
+      2.34
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.09,
+     "peak_growth_mb": 2.39,
+     "retained_mb": 2.39,
+     "retained_series_mb": [
+      2.39
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.19,
+     "peak_growth_mb": 2.47,
+     "retained_mb": 2.47,
+     "retained_series_mb": [
+      2.47
+     ],
+     "max_rss_mb": 77.2
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 39.8,
+     "peak_growth_mb": 1.31,
+     "retained_mb": 1.33,
+     "retained_series_mb": [
+      1.33
+     ],
+     "max_rss_mb": 39.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.38,
+     "peak_rss_mb": 39.7,
+     "peak_growth_mb": 1.33,
+     "retained_mb": 1.33,
+     "retained_series_mb": [
+      1.33
+     ],
+     "max_rss_mb": 39.7
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 0.5,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 39.94,
+     "peak_growth_mb": 1.23,
+     "retained_mb": 1.25,
+     "retained_series_mb": [
+      1.25
+     ],
+     "max_rss_mb": 40.0
+    }
+   ]
+  },
+  "reduce_tsd_nested_graph_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.16,
+     "peak_growth_mb": 2.45,
+     "retained_mb": 2.45,
+     "retained_series_mb": [
+      2.45
+     ],
+     "max_rss_mb": 77.2
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.55,
+     "peak_rss_mb": 77.05,
+     "peak_growth_mb": 2.5,
+     "retained_mb": 2.5,
+     "retained_series_mb": [
+      2.5
+     ],
+     "max_rss_mb": 77.1
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 77.23,
+     "peak_growth_mb": 2.55,
+     "retained_mb": 2.55,
+     "retained_series_mb": [
+      2.55
+     ],
+     "max_rss_mb": 77.2
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 39.91,
+     "peak_growth_mb": 1.23,
+     "retained_mb": 1.25,
+     "retained_series_mb": [
+      1.25
+     ],
+     "max_rss_mb": 39.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 39.8,
+     "peak_growth_mb": 1.25,
+     "retained_mb": 1.25,
+     "retained_series_mb": [
+      1.25
+     ],
+     "max_rss_mb": 39.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "reduce_tsd_nested_graph_std",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "same",
+     "note": "",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.45,
+     "peak_rss_mb": 39.81,
+     "peak_growth_mb": 1.36,
+     "retained_mb": 1.38,
+     "retained_series_mb": [
+      1.38
+     ],
+     "max_rss_mb": 39.8
+    }
+   ]
+  },
+  "switch_keyed_collection_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 77.45,
+     "peak_growth_mb": 2.89,
+     "retained_mb": 2.89,
+     "retained_series_mb": [
+      2.89
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.8,
+     "peak_rss_mb": 77.58,
+     "peak_growth_mb": 2.78,
+     "retained_mb": 2.78,
+     "retained_series_mb": [
+      2.78
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.53,
+     "peak_growth_mb": 2.86,
+     "retained_mb": 2.86,
+     "retained_series_mb": [
+      2.86
+     ],
+     "max_rss_mb": 77.5
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.52,
+     "peak_rss_mb": 41.03,
+     "peak_growth_mb": 2.52,
+     "retained_mb": 2.52,
+     "retained_series_mb": [
+      2.52
+     ],
+     "max_rss_mb": 41.0
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 41.11,
+     "peak_growth_mb": 2.48,
+     "retained_mb": 2.48,
+     "retained_series_mb": [
+      2.48
+     ],
+     "max_rss_mb": 41.1
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 41.16,
+     "peak_growth_mb": 2.48,
+     "retained_mb": 2.48,
+     "retained_series_mb": [
+      2.48
+     ],
+     "max_rss_mb": 41.2
+    }
+   ]
+  },
+  "switch_keyed_collection_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.91,
+     "peak_growth_mb": 3.27,
+     "retained_mb": 3.28,
+     "retained_series_mb": [
+      3.28
+     ],
+     "max_rss_mb": 77.9
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.72,
+     "peak_rss_mb": 77.97,
+     "peak_growth_mb": 3.25,
+     "retained_mb": 3.25,
+     "retained_series_mb": [
+      3.25
+     ],
+     "max_rss_mb": 78.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 78.0,
+     "peak_growth_mb": 3.38,
+     "retained_mb": 3.38,
+     "retained_series_mb": [
+      3.38
+     ],
+     "max_rss_mb": 78.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 41.36,
+     "peak_growth_mb": 2.88,
+     "retained_mb": 2.88,
+     "retained_series_mb": [
+      2.88
+     ],
+     "max_rss_mb": 41.4
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.48,
+     "peak_rss_mb": 41.31,
+     "peak_growth_mb": 2.83,
+     "retained_mb": 2.83,
+     "retained_series_mb": [
+      2.83
+     ],
+     "max_rss_mb": 41.3
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.67,
+     "peak_rss_mb": 41.48,
+     "peak_growth_mb": 2.81,
+     "retained_mb": 2.81,
+     "retained_series_mb": [
+      2.81
+     ],
+     "max_rss_mb": 41.5
+    }
+   ]
+  },
+  "switch_keyed_collection_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.55,
+     "peak_rss_mb": 78.53,
+     "peak_growth_mb": 3.98,
+     "retained_mb": 3.98,
+     "retained_series_mb": [
+      3.98
+     ],
+     "max_rss_mb": 78.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 78.58,
+     "peak_growth_mb": 3.95,
+     "retained_mb": 3.95,
+     "retained_series_mb": [
+      3.95
+     ],
+     "max_rss_mb": 78.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 78.64,
+     "peak_growth_mb": 4.0,
+     "retained_mb": 4.0,
+     "retained_series_mb": [
+      4.0
+     ],
+     "max_rss_mb": 78.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.47,
+     "peak_rss_mb": 41.78,
+     "peak_growth_mb": 3.31,
+     "retained_mb": 3.31,
+     "retained_series_mb": [
+      3.31
+     ],
+     "max_rss_mb": 41.8
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.59,
+     "peak_rss_mb": 41.91,
+     "peak_growth_mb": 3.31,
+     "retained_mb": 3.31,
+     "retained_series_mb": [
+      3.31
+     ],
+     "max_rss_mb": 41.9
+    },
+    {
+     "impl": "hg",
+     "scenario": "switch_keyed_collection_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "adds an empty DEFAULT case for the invalid key at graph start",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.62,
+     "peak_rss_mb": 41.89,
+     "peak_growth_mb": 3.27,
+     "retained_mb": 3.27,
+     "retained_series_mb": [
+      3.27
+     ],
+     "max_rss_mb": 41.9
+    }
+   ]
+  },
+  "mesh_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.69,
+     "peak_growth_mb": 3.03,
+     "retained_mb": 3.03,
+     "retained_series_mb": [
+      3.03
+     ],
+     "max_rss_mb": 77.7
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.53,
+     "peak_growth_mb": 2.86,
+     "retained_mb": 2.88,
+     "retained_series_mb": [
+      2.88
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.66,
+     "peak_growth_mb": 2.98,
+     "retained_mb": 3.0,
+     "retained_series_mb": [
+      3.0
+     ],
+     "max_rss_mb": 77.7
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.61,
+     "peak_rss_mb": 40.53,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.55,
+     "peak_rss_mb": 40.45,
+     "peak_growth_mb": 1.91,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 40.5
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.75,
+     "peak_rss_mb": 40.5,
+     "peak_growth_mb": 1.75,
+     "retained_mb": 1.77,
+     "retained_series_mb": [
+      1.77
+     ],
+     "max_rss_mb": 40.5
+    }
+   ]
+  },
+  "mesh_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 77.94,
+     "peak_growth_mb": 3.38,
+     "retained_mb": 3.39,
+     "retained_series_mb": [
+      3.39
+     ],
+     "max_rss_mb": 78.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 78.0,
+     "peak_growth_mb": 3.41,
+     "retained_mb": 3.42,
+     "retained_series_mb": [
+      3.42
+     ],
+     "max_rss_mb": 78.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.95,
+     "peak_growth_mb": 3.33,
+     "retained_mb": 3.34,
+     "retained_series_mb": [
+      3.34
+     ],
+     "max_rss_mb": 78.0
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.7,
+     "peak_rss_mb": 40.62,
+     "peak_growth_mb": 1.92,
+     "retained_mb": 1.92,
+     "retained_series_mb": [
+      1.92
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.64,
+     "peak_rss_mb": 40.58,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.94,
+     "retained_series_mb": [
+      1.94
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.69,
+     "peak_rss_mb": 40.62,
+     "peak_growth_mb": 1.94,
+     "retained_mb": 1.95,
+     "retained_series_mb": [
+      1.95
+     ],
+     "max_rss_mb": 40.7
+    }
+   ]
+  },
+  "mesh_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 78.61,
+     "peak_growth_mb": 4.02,
+     "retained_mb": 4.03,
+     "retained_series_mb": [
+      4.03
+     ],
+     "max_rss_mb": 78.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 78.59,
+     "peak_growth_mb": 3.94,
+     "retained_mb": 3.95,
+     "retained_series_mb": [
+      3.95
+     ],
+     "max_rss_mb": 78.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 78.53,
+     "peak_growth_mb": 3.94,
+     "retained_mb": 3.95,
+     "retained_series_mb": [
+      3.95
+     ],
+     "max_rss_mb": 78.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.36,
+     "peak_rss_mb": 40.56,
+     "peak_growth_mb": 2.2,
+     "retained_mb": 2.22,
+     "retained_series_mb": [
+      2.22
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.42,
+     "peak_rss_mb": 40.61,
+     "peak_growth_mb": 2.19,
+     "retained_mb": 2.19,
+     "retained_series_mb": [
+      2.19
+     ],
+     "max_rss_mb": 40.6
+    },
+    {
+     "impl": "hg",
+     "scenario": "mesh_std",
+     "cycle_scale": 0.1,
+     "size_scale": 2.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "adapted",
+     "note": "switch_ cases are @graph definitions instead of lambdas",
+     "implementation": "hg",
+     "version": "hg-cpp",
+     "ok": true,
+     "ready_rss_mb": 38.66,
+     "peak_rss_mb": 40.75,
+     "peak_growth_mb": 2.09,
+     "retained_mb": 2.09,
+     "retained_series_mb": [
+      2.09
+     ],
+     "max_rss_mb": 40.8
+    }
+   ]
+  },
+  "service_adaptor_py__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.52,
+     "peak_rss_mb": 77.31,
+     "peak_growth_mb": 2.8,
+     "retained_mb": 2.81,
+     "retained_series_mb": [
+      2.81
+     ],
+     "max_rss_mb": 77.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.58,
+     "peak_rss_mb": 77.22,
+     "peak_growth_mb": 2.64,
+     "retained_mb": 2.64,
+     "retained_series_mb": [
+      2.64
+     ],
+     "max_rss_mb": 77.2
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.69,
+     "peak_rss_mb": 77.3,
+     "peak_growth_mb": 2.61,
+     "retained_mb": 2.62,
+     "retained_series_mb": [
+      2.62
+     ],
+     "max_rss_mb": 77.3
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "service_adaptor_py__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.41,
+     "peak_growth_mb": 2.7,
+     "retained_mb": 2.7,
+     "retained_series_mb": [
+      2.7
+     ],
+     "max_rss_mb": 77.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.31,
+     "peak_growth_mb": 2.67,
+     "retained_mb": 2.69,
+     "retained_series_mb": [
+      2.69
+     ],
+     "max_rss_mb": 77.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.61,
+     "peak_growth_mb": 2.95,
+     "retained_mb": 2.95,
+     "retained_series_mb": [
+      2.95
+     ],
+     "max_rss_mb": 77.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "service_adaptor_py__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.56,
+     "peak_rss_mb": 77.56,
+     "peak_growth_mb": 3.0,
+     "retained_mb": 3.0,
+     "retained_series_mb": [
+      3.0
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.62,
+     "peak_rss_mb": 77.55,
+     "peak_growth_mb": 2.92,
+     "retained_mb": 2.94,
+     "retained_series_mb": [
+      2.94
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.61,
+     "peak_rss_mb": 77.55,
+     "peak_growth_mb": 2.94,
+     "retained_mb": 2.94,
+     "retained_series_mb": [
+      2.94
+     ],
+     "max_rss_mb": 77.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "service_adaptor_py",
+     "cycle_scale": 0.05,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no service adaptor API"
+    }
+   ]
+  },
+  "reduce_dynamic_tsl_std__small": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.64,
+     "peak_rss_mb": 77.33,
+     "peak_growth_mb": 2.69,
+     "retained_mb": 2.69,
+     "retained_series_mb": [
+      2.69
+     ],
+     "max_rss_mb": 77.3
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.75,
+     "peak_rss_mb": 77.36,
+     "peak_growth_mb": 2.61,
+     "retained_mb": 2.62,
+     "retained_series_mb": [
+      2.62
+     ],
+     "max_rss_mb": 77.4
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.7,
+     "peak_rss_mb": 77.33,
+     "peak_growth_mb": 2.62,
+     "retained_mb": 2.64,
+     "retained_series_mb": [
+      2.64
+     ],
+     "max_rss_mb": 77.4
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 0.25,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no unbounded TSL"
+    }
+   ]
+  },
+  "reduce_dynamic_tsl_std__medium": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.56,
+     "peak_growth_mb": 2.89,
+     "retained_mb": 2.91,
+     "retained_series_mb": [
+      2.91
+     ],
+     "max_rss_mb": 77.6
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 77.48,
+     "peak_growth_mb": 2.83,
+     "retained_mb": 2.84,
+     "retained_series_mb": [
+      2.84
+     ],
+     "max_rss_mb": 77.5
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.67,
+     "peak_rss_mb": 77.53,
+     "peak_growth_mb": 2.86,
+     "retained_mb": 2.88,
+     "retained_series_mb": [
+      2.88
+     ],
+     "max_rss_mb": 77.6
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 1.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no unbounded TSL"
+    }
+   ]
+  },
+  "reduce_dynamic_tsl_std__large": {
+   "hgraph": [
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.77,
+     "peak_rss_mb": 78.95,
+     "peak_growth_mb": 4.19,
+     "retained_mb": 4.19,
+     "retained_series_mb": [
+      4.19
+     ],
+     "max_rss_mb": 79.0
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.59,
+     "peak_rss_mb": 78.81,
+     "peak_growth_mb": 4.22,
+     "retained_mb": 4.23,
+     "retained_series_mb": [
+      4.23
+     ],
+     "max_rss_mb": 78.8
+    },
+    {
+     "impl": "hgraph",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "fidelity": "original",
+     "implementation": "hgraph",
+     "ok": true,
+     "ready_rss_mb": 74.66,
+     "peak_rss_mb": 78.89,
+     "peak_growth_mb": 4.23,
+     "retained_mb": 4.25,
+     "retained_series_mb": [
+      4.25
+     ],
+     "max_rss_mb": 78.9
+    }
+   ],
+   "hg": [
+    {
+     "impl": "hg",
+     "scenario": "reduce_dynamic_tsl_std",
+     "cycle_scale": 0.1,
+     "size_scale": 4.0,
+     "mode": "memory",
+     "python": "3.14.7",
+     "ok": false,
+     "unsupported": "HG has no unbounded TSL"
+    }
+   ]
+  }
+ }
+}

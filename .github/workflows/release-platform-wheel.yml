@@ -107,6 +107,20 @@ jobs:
           CMAKE_BUILD_PARALLEL_LEVEL: ${{ inputs.parallel }}
         # A fixed build directory lets the compiler cache match results from earlier runs.
         run: python -m build --wheel --no-isolation --outdir raw-wheel --config-setting build-dir=build/wheel
+      # The installed SDK tests use this build through a CMake install of the same build tree.
+      - name: Package the CMake install tree
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:RUNNER_TEMP "hg-install"
+          cmake --install build/wheel --prefix $prefix
+          if ($LASTEXITCODE -ne 0) { throw "CMake install failed ($LASTEXITCODE)" }
+          tar -C $prefix -cf install-tree.tar .
+          if ($LASTEXITCODE -ne 0) { throw "Packaging the install tree failed ($LASTEXITCODE)" }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: install-tree-${{ inputs.os }}
+          path: install-tree.tar
+          if-no-files-found: error
       - name: Repair macOS wheel dependencies
         if: runner.os == 'macOS'
         run: delocate-wheel --require-archs arm64 -w dist raw-wheel/*.whl
