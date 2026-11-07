@@ -25,8 +25,10 @@
 #include "../../utils/counting_memory_resource.hpp"
 #include "../../value/scalar/test_scalar_provider.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <new>
 #include <optional>
@@ -1240,20 +1242,24 @@ TEST_CASE("reference provider memory does not grow while each cycle replaces eve
         auto runtime = RuntimeGraph{compiled, allocator{memory}, runtime_global_state};
         runtime.start(MIN_DT + std::chrono::microseconds{1});
 
+        // Returns the peak allocated byte count after the evaluated cycles.
         const auto run_cycles = [&](i64 count) {
+            auto peak_bytes = std::size_t{};
             for (auto end = ReplacedNestedKeys::cycle + count; ReplacedNestedKeys::cycle < end;
                  ++ReplacedNestedKeys::cycle) {
                 runtime.schedule(0);
                 runtime.evaluate(MIN_DT + std::chrono::microseconds{ReplacedNestedKeys::cycle + 2});
+                peak_bytes = std::max(peak_bytes, memory.allocated_bytes());
             }
+            return peak_bytes;
         };
 
         ReplacedNestedKeys::cycle = 0;
         run_cycles(8);
-        const auto warmed_bytes = memory.allocated_bytes();
-        run_cycles(64);
+        // Allocation sizes depend on the key values with some standard libraries, so equal windows compare peaks.
+        const auto warmed_peak_bytes = run_cycles(32);
 
-        CHECK(memory.allocated_bytes() == warmed_bytes);
+        CHECK(run_cycles(32) <= warmed_peak_bytes);
         runtime.stop();
     }
 
