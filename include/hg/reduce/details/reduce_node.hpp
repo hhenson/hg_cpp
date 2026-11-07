@@ -16,6 +16,7 @@ namespace details {
 [[nodiscard]] std::unique_ptr<NodeTemplate> make_nested_reduce_node(ReduceNestedGraphWiring wiring,
                                                                      const ResolvedSignature &signature,
                                                                      std::uint32_t dictionary_parameter,
+                                                                     std::uint32_t items_parameter,
                                                                      std::optional<std::uint32_t> default_parameter);
 [[nodiscard]] std::unique_ptr<NodeTemplate> make_compact_reduce_node(ReduceCompactGraphWiring wiring,
                                                                       const ResolvedSignature &signature,

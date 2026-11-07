@@ -218,6 +218,8 @@ class RuntimeGraph {
     bool started_ : 1 {};
     bool stopped_ : 1 {};
     bool finalized_ : 1 {};
+    // Set when this graph adds a cycle callback. Nested graphs without records skip the outer record scan.
+    bool adds_cycle_callbacks_ : 1 {};
     SchedulingInfo inline_scheduling_{};
 };
 
