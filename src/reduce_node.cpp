@@ -202,11 +202,10 @@ class ReduceTree {
     template <typename Pairs> ReduceNodeIndex allocate_branch(std::uint8_t split_bit, Pairs &pairs) {
         const auto index = allocate_node();
         auto release = util::scope_exit{[&]() noexcept { release_node(index); }};
+        nodes_[index].flags = split_bit;
         const auto pair_index = pairs.acquire_pair(index);
 
-        auto &branch = nodes_[index];
-        branch.flags = split_bit;
-        branch.pair_index = pair_index;
+        nodes_[index].pair_index = pair_index;
         release.release();
         return index;
     }
@@ -690,6 +689,9 @@ class CompactReduceRuntime {
 struct NestedReducePair {
     NestedGraph graph;
     ReduceNodeIndex branch{invalid_reduce_node};
+    // A pair graph reads only the outputs of pair graphs with lower split bits, because a branch's split bit is
+    // higher than the split bits below it and does not change.
+    std::uint8_t split_bit{};
 };
 
 // Evaluates one reducer graph instance for each tree branch. A branch starts its graph when it is first evaluated and
@@ -735,16 +737,25 @@ class NestedReduceRuntime {
         return publish_result(compiled, invocation, items);
     }
 
-    void stop(EvaluationContext &context) noexcept { clear(context); }
+    void stop(EvaluationContext &context) noexcept {
+        clear(context);
+        // NestedGraph::stop destroys the graph in a later cycle callback, and cycle callbacks run in reverse order.
+        // Stopping lower branches first destroys each graph before the graphs whose outputs it reads.
+        const auto split_bit = [this](ReduceNodeIndex index) { return pairs_[index].split_bit; };
+        std::ranges::sort(retired_pairs_, std::ranges::less{}, split_bit);
+        for (const auto index : retired_pairs_) {
+            pairs_[index].graph.stop(context);
+        }
+    }
 
     void destroy(EvaluationContext &context) noexcept {
         auto &memory = memory_.memory_resource();
+        clear(context);
         context.runtime_graph().remove_cycle_callback(this);
         for (const auto index : pair_positions_) {
-            auto &graph = pairs_[index].graph;
-            context.runtime_graph().remove_cycle_callback(&graph);
-            graph.stop_and_destroy(context);
+            context.runtime_graph().remove_cycle_callback(&pairs_[index].graph);
         }
+        release_retired_pairs(context);
         pairs_.release(pair_positions_, memory);
         pair_positions_.release(memory);
         retired_pairs_.clear();
@@ -765,7 +776,8 @@ class NestedReduceRuntime {
         auto &memory = memory_.memory_resource();
         const auto index = pair_positions_.acquire(memory);
         try {
-            pairs_.emplace_at(index, memory, NestedReducePair{.branch = branch});
+            pairs_.emplace_at(index, memory,
+                              NestedReducePair{.branch = branch, .split_bit = tree_[branch].split_bit()});
         } catch (...) {
             pair_positions_.reset(index);
             throw;
@@ -773,16 +785,13 @@ class NestedReduceRuntime {
         return index;
     }
 
-    // Stops the pair's graph. Its storage remains allocated until the next outer cycle so that references to the
+    // Detaches the pair from the tree. Its graph is destroyed at the end of the outer cycle so that references to the
     // graph output remain valid in the cycle in which the branch is removed.
     void retire_pair(ReduceNodeIndex index, EvaluationContext &context) noexcept {
-        auto &pair = pairs_[index];
-        pair.branch = invalid_reduce_node;
+        pairs_[index].branch = invalid_reduce_node;
         if (retired_pairs_.empty()) {
-            // NestedGraph::stop adds its callback after this one, so the stopped graph is destroyed first.
             context.add_cycle_callback(this, release_retired_pairs_callback);
         }
-        pair.graph.stop(context);
         retired_pairs_.push_back(index);
     }
 
@@ -803,8 +812,11 @@ class NestedReduceRuntime {
         static_cast<NestedReduceRuntime *>(receiver)->release_retired_pairs(context);
     }
 
+    // Destroys higher branches first, so each graph is destroyed before the graphs whose outputs it reads.
     void release_retired_pairs(EvaluationContext &context) noexcept {
         auto &memory = memory_.memory_resource();
+        const auto split_bit = [this](ReduceNodeIndex index) { return pairs_[index].split_bit; };
+        std::ranges::sort(retired_pairs_, std::ranges::greater{}, split_bit);
         for (const auto index : retired_pairs_) {
             pairs_[index].graph.stop_and_destroy(context);
             pairs_.erase_at(index, memory);
